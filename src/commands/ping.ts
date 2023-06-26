@@ -5,7 +5,7 @@ export const data = new SlashCommandBuilder()
     .setDescription('Répond pong');
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-    await interaction.reply('Pong!');
+    await interaction.reply('Pong !');
 }
 
 export const admin = false;
