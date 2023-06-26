@@ -26,10 +26,10 @@ export class Player {
 
 export class Game {
     /** Players discord ids (usefull at the start of the game) */
-    players_ids: string[];
+    players_ids: string[] = [];
 
     /** All roles in the game (usefull at the start of the game) */
-    roles: Role[];
+    roles: Role[] = [];
 
     creator_id: string;
 
@@ -52,8 +52,8 @@ export class Game {
             .setTitle("Configuration de la partie")
             .setColor(`#${process.env.MAIN_COLOR}`)
             .addFields([
-                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
-                { name: "Rôles :", value: this.roles.map(role => `• ${role} ${getEmojiFromRole(role)}`).join("\n") }
+                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") || "Aucun joueur pour l'instant" },
+                { name: "Rôles :", value: this.roles.map(role => `• ${role} ${getEmojiFromRole(role)}`).join("\n") || "Aucun rôle pour l'instant" }
             ]);
         
         const joinComponents = new ActionRowBuilder<ButtonBuilder>()
@@ -129,8 +129,14 @@ export class Game {
                         break;
                     }
                 case "start":
-                    if (this.players_ids.length < 3) {
+                    if (buttonInteraction.user.id !== this.creator_id) {
+                        await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
+                        break;
+                    } else if (this.players_ids.length < 3) {
                         await buttonInteraction.reply({ content: "Il faut au moins 3 joueurs pour lancer la partie.", ephemeral: true });
+                        break;
+                    } else if (this.players_ids.length !== this.roles.length) {
+                        await buttonInteraction.reply({ content: "Il faut autant de rôles que de joueurs pour lancer la partie.", ephemeral: true });
                         break;
                     } else {
                         let embed = new EmbedBuilder()
