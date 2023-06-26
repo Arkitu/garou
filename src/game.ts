@@ -1,8 +1,17 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction } from "discord.js";
 
 enum Role {
-    Villager,
-    Werewolf
+    Villager = "Villageois",
+    Werewolf = "Loup-garou"
+}
+
+function getEmojiFromRole(role: Role) {
+    switch (role) {
+        case Role.Villager:
+            return "👨‍🌾";
+        case Role.Werewolf:
+            return "🐺";
+    }
 }
 
 export class Player {
@@ -19,8 +28,10 @@ export class Game {
     /** Players discord ids (usefull at the start of the game) */
     players_ids: string[];
 
-    /** All roles (usefull at the start of the game) */
+    /** All roles in the game (usefull at the start of the game) */
     roles: Role[];
+
+    creator_id: string;
 
     players: Player[];
     client: Client;
@@ -29,19 +40,23 @@ export class Game {
 
 
 
-    constructor(players_ids: string[] = [], client: Client, guild: Guild) {
+    constructor(players_ids: string[] = [], client: Client, guild: Guild, creator_id: string) {
         this.players_ids = players_ids;
         this.client = client;
         this.guild = guild;
+        this.creator_id = creator_id;
     }
 
-    async configMessage(interaction: ChatInputCommandInteraction) {
+    async configMessageRefresh(interaction: ChatInputCommandInteraction | ButtonInteraction) {
         let embed = new EmbedBuilder()
             .setTitle("Configuration de la partie")
             .setColor(`#${process.env.MAIN_COLOR}`)
-            .setDescription("**Joueurs :**\n" + this.players_ids.map(id => `• <@${id}>`).join("\n"));
+            .addFields([
+                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
+                { name: "Rôles :", value: this.roles.map(role => `• ${role} ${getEmojiFromRole(role)}`).join("\n") }
+            ]);
         
-        let joinComponents = new ActionRowBuilder<ButtonBuilder>()
+        const joinComponents = new ActionRowBuilder<ButtonBuilder>()
             .addComponents([
                 new ButtonBuilder()
                     .setCustomId("join")
@@ -62,7 +77,92 @@ export class Game {
                     .setStyle(ButtonStyle.Success)
             ]);
         
-        await interaction.editReply({ embeds: [embed], components: [joinComponents] });
+        const roleComponents = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents([
+                new ButtonBuilder()
+                    .setCustomId("villager")
+                    .setEmoji("👨‍🌾")
+                    .setLabel("Villageois")
+                    .setStyle(ButtonStyle.Primary),
+                
+                new ButtonBuilder()
+                    .setCustomId("werewolf")
+                    .setEmoji("🐺")
+                    .setLabel("Loup-garou")
+                    .setStyle(ButtonStyle.Danger)
+            ]);
+        
+        let msg;
+        if (interaction.isChatInputCommand()) {
+            msg = await interaction.editReply({ embeds: [embed], components: [joinComponents, roleComponents] });
+        } else {
+            msg = await interaction.update({ embeds: [embed], components: [joinComponents, roleComponents] });
+        }
+        return msg;
+    }
+
+    async configMessage(interaction: ChatInputCommandInteraction) {
+        const reply = await this.configMessageRefresh(interaction);
+
+        while (true) {
+            const buttonInteraction = await reply.awaitMessageComponent<ComponentType.Button>({ time: 60000 });
+
+            await db.updateOrCreateUser(interaction.user.id, interaction.user.username);
+
+            switch (buttonInteraction.customId) {
+                case "join":
+                    if (this.players_ids.includes(buttonInteraction.user.id)) {
+                        await buttonInteraction.reply({ content: "Vous êtes déjà dans la partie.", ephemeral: true });
+                        break;
+                    } else {
+                        this.players_ids.push(buttonInteraction.user.id);
+                        await this.configMessageRefresh(buttonInteraction);
+                        break;
+                    }
+                case "leave":
+                    if (!this.players_ids.includes(buttonInteraction.user.id)) {
+                        await buttonInteraction.reply({ content: "Vous n'êtes pas dans la partie.", ephemeral: true });
+                        break;
+                    } else {
+                        this.players_ids = this.players_ids.filter(id => id !== buttonInteraction.user.id);
+                        await this.configMessageRefresh(buttonInteraction);
+                        break;
+                    }
+                case "start":
+                    if (this.players_ids.length < 3) {
+                        await buttonInteraction.reply({ content: "Il faut au moins 3 joueurs pour lancer la partie.", ephemeral: true });
+                        break;
+                    } else {
+                        let embed = new EmbedBuilder()
+                            .setTitle("Partie en cours")
+                            .setColor(`#${process.env.MAIN_COLOR}`)
+                            .addFields([
+                                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
+                                { name: "Rôles :", value: this.roles.map(role => `• ${role} ${getEmojiFromRole(role)}`).join("\n") }
+                            ]);
+                        await buttonInteraction.update({ components: [], embeds: [embed] });
+                        return;
+                    }
+                case "villager":
+                    if (interaction.user.id !== this.creator_id) {
+                        await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
+                        break;
+                    } else {
+                        this.roles.push(Role.Villager);
+                        await this.configMessageRefresh(buttonInteraction);
+                        break;
+                    }
+                case "werewolf":
+                    if (interaction.user.id !== this.creator_id) {
+                        await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
+                        break;
+                    } else {
+                        this.roles.push(Role.Werewolf);
+                        await this.configMessageRefresh(buttonInteraction);
+                        break;
+                    }
+            }
+        }
     }
 
     async init(interaction: ChatInputCommandInteraction) {
