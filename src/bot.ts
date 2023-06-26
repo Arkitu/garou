@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Client, DiscordjsErrorCodes, Events, GatewayIntentBits } from 'discord.js';
 import consoleStamp from 'console-stamp';
 import getCmds from './get_cmds.js';
 import loadConfig from './load_config.js';
@@ -55,22 +55,25 @@ client.on(Events.InteractionCreate, async interaction => {
         console.log(`${interaction.user.username} uses command: /${interaction.commandName}`);
     }
 
-    await command.execute(interaction);
+    try {
+        await command.execute(interaction);
+    } catch (error) {
+        if (error instanceof Error && error.message === "Collector received no interactions before ending with reason: time") {
+            await interaction.editReply({ content: '⏱️ Vous avez pris trop de temps', components: [], embeds: [] });
+            return;
+        }
 
-    // try {
-    //     await command.execute(interaction);
-    // } catch (error) {
-    //     console.error(`${interaction.user.username} tried to use /${interaction.commandName} but an error occured: ${error}`);
-    //     try {
-    //         await interaction.reply({ content: '⚠️ Une erreur est survenue lors de l\'exécution de cette commande!', ephemeral: true });
-    //     } catch (error) {
-    //         await interaction.editReply({
-    //             content: '⚠️ Une erreur est survenue lors de l\'exécution de cette commande!',
-    //             components: [],
-    //             embeds: []
-    //         });
-    //     }
-    // }
+        console.error(`${interaction.user.username} tried to use /${interaction.commandName} but an error occured: ${error}`);
+        try {
+            await interaction.reply({ content: '⚠️ Une erreur est survenue lors de l\'exécution de cette commande!', ephemeral: true });
+        } catch (error) {
+            await interaction.editReply({
+                content: '⚠️ Une erreur est survenue lors de l\'exécution de cette commande!',
+                components: [],
+                embeds: []
+            });
+        }
+    }
 })
 
 client.on(Events.InteractionCreate, async interaction => {
