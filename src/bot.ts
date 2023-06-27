@@ -1,4 +1,4 @@
-import { Client, DiscordjsErrorCodes, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Events, GatewayIntentBits } from 'discord.js';
 import consoleStamp from 'console-stamp';
 import getCmds from './get_cmds.js';
 import loadConfig from './load_config.js';
