@@ -155,6 +155,9 @@ export class Game {
                         break;
                     } else {
                         this.roles.push(Role.Villager);
+                        if (this.roles.length > this.players_ids.length) {
+                            this.roles.shift();
+                        }
                         await this.configMessageRefresh(buttonInteraction);
                         break;
                     }
