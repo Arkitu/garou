@@ -1,6 +1,6 @@
 import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction } from "discord.js";
 
-enum Role {
+export enum Role {
     Villager = "Villageois",
     Werewolf = "Loup-garou"
 }
@@ -176,6 +176,8 @@ export class Game {
 
     async init(interaction: ChatInputCommandInteraction) {
         await this.configMessage(interaction);
+
+        console.debug()
 
         // Create category
         this.categoryChannel = await this.guild.channels.create({

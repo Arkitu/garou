@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
-import { Game } from '../game.js';
+import { Game, Role } from '../game.js';
 
 export const data = new SlashCommandBuilder()
     .setName('play_debug')
@@ -18,6 +18,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const players = [interaction.user.id, "1117365150899511296", "1048011651145797673", "448110812801007618"];
 
     const game = new Game(players, interaction.client, interaction.guild, interaction.user.id);
+    game.roles = [Role.Villager, Role.Villager, Role.Villager, Role.Werewolf];
     await game.init(interaction);
 }
 

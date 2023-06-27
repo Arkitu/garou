@@ -63,6 +63,8 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
+        throw error;
+
         console.error(`${interaction.user.username} tried to use /${interaction.commandName} but an error occured: ${error}`);
         try {
             await interaction.reply({ content: '⚠️ Une erreur est survenue lors de l\'exécution de cette commande!', ephemeral: true });
