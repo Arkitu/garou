@@ -1,4 +1,5 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable } from "discord.js";
+import { shuffleArray } from "./utils.js";
 
 export enum Role {
     Villager = "Villageois",
@@ -132,8 +133,8 @@ export class Game {
                     if (buttonInteraction.user.id !== this.creator_id) {
                         await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
                         break;
-                    } else if (this.players_ids.length < 3) {
-                        await buttonInteraction.reply({ content: "Il faut au moins 3 joueurs pour lancer la partie.", ephemeral: true });
+                    } else if (this.players_ids.length < 2) {
+                        await buttonInteraction.reply({ content: "Il faut au moins 2 joueurs pour lancer la partie.", ephemeral: true });
                         break;
                     } else if (this.players_ids.length !== this.roles.length) {
                         await buttonInteraction.reply({ content: "Il faut autant de rôles que de joueurs pour lancer la partie.", ephemeral: true });
@@ -177,7 +178,16 @@ export class Game {
     async init(interaction: ChatInputCommandInteraction) {
         await this.configMessage(interaction);
 
-        console.debug()
+        // Fetch players
+        for (const id of this.players_ids) {
+            await this.guild.members.fetch(id);
+        }
+
+        // Create players
+        let roles = shuffleArray(this.roles);
+        for (let i=0; this.players_ids.length > i; i++) {
+            this.players.push(new Player(this.players_ids[i], roles[i]));
+        }
 
         // Create category
         this.categoryChannel = await this.guild.channels.create({
@@ -192,17 +202,40 @@ export class Game {
             type: ChannelType.GuildText,
             permissionOverwrites: this.generalPermissionOverwrites
         })
+
+        if (this.roles.includes(Role.Werewolf)) {
+            this.categoryChannel.children.create({
+                name: "Tanière des loups",
+                type: ChannelType.GuildText,
+                permissionOverwrites: this.generalPermissionOverwrites
+            })
+        }
     }
 
-    get generalPermissionOverwrites() {
+    get generalPermissionOverwrites(): OverwriteResolvable[] {
         return [
             {
-                id: this.guild.roles.everyone,
+                id: this.guild.roles.everyone.id,
                 deny: [PermissionFlagsBits.ViewChannel]
             },
             ...this.players_ids.map(id => {
                 return {
                     id: id,
+                    allow: [PermissionFlagsBits.ViewChannel]
+                }
+            })
+        ]
+    }
+
+    get werewolfPermissionOverwrites(): OverwriteResolvable[] {
+        return [
+            {
+                id: this.guild.roles.everyone.id,
+                deny: [PermissionFlagsBits.ViewChannel]
+            },
+            ...this.players.filter(player => player.role === Role.Werewolf).map(player => {
+                return {
+                    id: player.id,
                     allow: [PermissionFlagsBits.ViewChannel]
                 }
             })

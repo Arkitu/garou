@@ -15,10 +15,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await db.updateOrCreateUser(interaction.user.id, interaction.user.username);
 
-    const players = [interaction.user.id, "1117365150899511296", "1048011651145797673", "448110812801007618"];
+    const players = [interaction.user.id, "953179631043899413"];
 
-    const game = new Game(players, interaction.client, interaction.guild, interaction.user.id);
-    game.roles = [Role.Villager, Role.Villager, Role.Villager, Role.Werewolf];
+    const game = new Game(players, interaction.client, interaction.guild!, interaction.user.id);
+    game.roles = [Role.Villager, Role.Werewolf];
     await game.init(interaction);
 }
 
