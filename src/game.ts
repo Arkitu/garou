@@ -1,4 +1,4 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType } from "discord.js";
 import { shuffleArray } from "./utils.js";
 
 interface Role {
@@ -53,6 +53,7 @@ export class Game {
     // Channels
     categoryChannel: CategoryChannel;
     generalChannel: TextChannel;
+    werewolvesChannel: TextChannel;
 
     constructor(players_ids: string[] = [], client: Client, guild: Guild, creator_id: string) {
         this.players_ids = players_ids;
@@ -65,10 +66,7 @@ export class Game {
         let embed = new EmbedBuilder()
             .setTitle("Configuration de la partie")
             .setColor(`#${process.env.MAIN_COLOR}`)
-            .addFields([
-                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") || "Aucun joueur pour l'instant" },
-                { name: "Rôles :", value: this.roles.map(role => `• ${role.name} ${role.emoji}`).join("\n") || "Aucun rôle pour l'instant" }
-            ]);
+            .addFields(this.playerAndRolesFields);
         
         const joinComponents = new ActionRowBuilder<ButtonBuilder>()
             .addComponents([
@@ -115,7 +113,7 @@ export class Game {
         return msg;
     }
 
-    async configMessage(interaction: ChatInputCommandInteraction) {
+    async configMessagePhase(interaction: ChatInputCommandInteraction) {
         const reply = await this.configMessageRefresh(interaction);
 
         while (true) {
@@ -125,79 +123,105 @@ export class Game {
 
             switch (buttonInteraction.customId) {
                 case "join":
+                    // Check if the user is already in the game
                     if (this.players_ids.includes(buttonInteraction.user.id)) {
                         await buttonInteraction.reply({ content: "Vous êtes déjà dans la partie.", ephemeral: true });
                         break;
-                    } else {
-                        this.players_ids.push(buttonInteraction.user.id);
-                        await this.configMessageRefresh(buttonInteraction);
-                        break;
                     }
+
+                    // Add the user to the game
+                    this.players_ids.push(buttonInteraction.user.id);
+
+                    await this.configMessageRefresh(buttonInteraction);
+                    break;
+                
                 case "leave":
+                    // Check if the user is in the game
                     if (!this.players_ids.includes(buttonInteraction.user.id)) {
                         await buttonInteraction.reply({ content: "Vous n'êtes pas dans la partie.", ephemeral: true });
                         break;
-                    } else {
-                        this.players_ids = this.players_ids.filter(id => id !== buttonInteraction.user.id);
-                        await this.configMessageRefresh(buttonInteraction);
-                        break;
                     }
+
+                    // Remove the user from the game
+                    this.players_ids = this.players_ids.filter(id => id !== buttonInteraction.user.id);
+
+                    await this.configMessageRefresh(buttonInteraction);
+                    break;
+                
                 case "start":
+                    // Check if the user is the creator of the game
                     if (buttonInteraction.user.id !== this.creator_id) {
                         await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
                         break;
-                    } else if (this.players_ids.length < 2) {
+                    }
+
+                    // Check if there is at least 2 players
+                    if (this.players_ids.length < 2) {
                         await buttonInteraction.reply({ content: "Il faut au moins 2 joueurs pour lancer la partie.", ephemeral: true });
                         break;
-                    } else if (this.players_ids.length !== this.roles.length) {
+                    }
+                    
+                    // Check if there is as many roles as players
+                    if (this.players_ids.length !== this.roles.length) {
                         await buttonInteraction.reply({ content: "Il faut autant de rôles que de joueurs pour lancer la partie.", ephemeral: true });
                         break;
-                    } else {
-                        let embed = new EmbedBuilder()
-                            .setTitle("Partie en cours")
-                            .setColor(`#${process.env.MAIN_COLOR}`)
-                            .addFields([
-                                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
-                                { name: "Rôles :", value: this.roles.map(role => `• ${role.name} ${role.emoji}`).join("\n") }
-                            ]);
-                        await buttonInteraction.update({ components: [], embeds: [embed] });
-                        return;
                     }
-                case "villager":
+
+                    // Change the message
+                    let embed = new EmbedBuilder()
+                        .setTitle("Partie en cours")
+                        .setColor(`#${process.env.MAIN_COLOR}`)
+                        .addFields(this.playerAndRolesFields);
+                
+                    await buttonInteraction.update({ components: [], embeds: [embed] });
+
+                    // Exit the function
+                    return;
+
+                // Handle roles buttons
+                default:
+                    // Check if the button custom id is a role
+                    if (!Object.keys(roles).includes(buttonInteraction.customId)) {
+                        throw new Error("Unknown button custom id");
+                    }
+
+                    // Check if the user is the creator of the game
                     if (interaction.user.id !== this.creator_id) {
                         await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
                         break;
-                    } else {
-                        this.roles.push(roles.villager);
-                        if (this.roles.length > this.players_ids.length) {
-                            this.roles.shift();
-                        }
-                        await this.configMessageRefresh(buttonInteraction);
-                        break;
                     }
-                case "werewolf":
-                    if (interaction.user.id !== this.creator_id) {
-                        await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
-                        break;
-                    } else {
-                        this.roles.push(roles.werewolf);
-                        await this.configMessageRefresh(buttonInteraction);
-                        break;
+
+                    // Add the role to the game
+                    this.roles.push(roles[buttonInteraction.customId as keyof typeof roles]);
+
+                    // Remove the first role from the game if there are too many roles
+                    if (this.roles.length > this.players_ids.length) {
+                        this.roles.shift();
                     }
+
+                    await this.configMessageRefresh(buttonInteraction);
+                    break;
             }
         }
     }
 
-    async init(interaction: ChatInputCommandInteraction) {
-        await this.configMessage(interaction);
-
-        // Create players
+    async createPlayers() {
         this.roles = shuffleArray(this.roles);
         this.players = [];
         for (let i=0; this.players_ids.length > i; i++) {
             this.players.push(new Player(await this.guild.members.fetch(this.players_ids[i]), this.roles[i]));
         }
+    }
 
+    async createChannel<T extends CategoryChannelType>(name: string, permissionOverwrites: OverwriteResolvable[], type: T) {
+        return await this.categoryChannel.children.create({
+            name: name,
+            type: type,
+            permissionOverwrites: permissionOverwrites
+        });
+    }
+
+    async createChannels() {
         // Create category
         this.categoryChannel = await this.guild.channels.create({
             name: "Partie de Garou",
@@ -205,31 +229,38 @@ export class Game {
             permissionOverwrites: this.generalPermissionOverwrites
         })
 
-        // Create channels
-
         // General
-        this.generalChannel = await this.categoryChannel.children.create({
-            name: "Place du village",
-            type: ChannelType.GuildText,
-            permissionOverwrites: this.generalPermissionOverwrites
-        })
+        this.generalChannel = await this.createChannel("Place du village", this.generalPermissionOverwrites, ChannelType.GuildText);
 
-        // Werewolf
+        // Send start message
+        let embeds: EmbedBuilder[] = [];
+        embeds.push(new EmbedBuilder()
+            .setTitle("Place du village")
+            .setColor(`#${process.env.MAIN_COLOR}`)
+            .setDescription("Bienvenue sur la place du village !\n\nC'est ici que vous débatrez le jour pour éliminer un joueur suspect\n\nVous trouverez votre rôle dans le salon à votre nom.\nNe le partagez pas avec les autres joueurs ! 😉")
+            .addFields(this.playerAndRolesFields)
+        );
+
+        // Warn players if there is/are admin(s) in the game
+        let admins = this.players.filter(p => p.user.permissions.has(PermissionFlagsBits.Administrator));
+        if (admins.length > 0) {
+            embeds.push(new EmbedBuilder()
+                .setTitle("Attention !")
+                .setColor(`#${process.env.WARN_COLOR}`)
+                .setDescription(`${admins.map(admin => `<@${admin.user.id}>`).join(", ")} est/sont administrateur(s) du serveur. Il(s) peut/peuvent donc voir tous les salons, y compris ceux privés. Attention à bien respecter les règles du jeu !`)
+            );
+        }
+
+        await this.generalChannel.send({ embeds });
+
+        // Werewolves
         if (this.roles.includes(roles.werewolf)) {
-            await this.categoryChannel.children.create({
-                name: "Tanière des loups",
-                type: ChannelType.GuildText,
-                permissionOverwrites: this.werewolfPermissionOverwrites
-            })
+            this.werewolvesChannel = await this.createChannel("Tanière des loups", this.werewolvesPermissionOverwrites, ChannelType.GuildText);
         }
 
         // Create a channel for each player
         for (let player of this.players) {
-            player.channel = await this.categoryChannel.children.create({
-                name: player.user.user.username,
-                type: ChannelType.GuildText,
-                permissionOverwrites: this.userPermissionOverwrites(player.user.id)
-            });
+            player.channel = await this.createChannel(player.user.user.username, this.userPermissionOverwrites(player.user.id), ChannelType.GuildText);
 
             // Send role message
             await player.channel.send({
@@ -242,29 +273,14 @@ export class Game {
                 ]
             });
         }
+    }
 
-        // Send start message
-        let embeds: EmbedBuilder[] = [];
-        embeds.push(new EmbedBuilder()
-            .setTitle("Place du village")
-            .setColor(`#${process.env.MAIN_COLOR}`)
-            .setDescription("Bienvenue sur la place du village !\n\nC'est ici que vous débatrez le jour pour éliminer un joueur suspect\n\nVous trouverez votre rôle dans le salon à votre nom.\nNe le partagez pas avec les autres joueurs ! 😉")
-            .addFields([
-                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
-                { name: "Rôles :", value: shuffleArray(this.roles).map(role => `• ${role.name} ${role.emoji}`).join("\n") }
-            ])
-        );
+    async init(interaction: ChatInputCommandInteraction) {
+        await this.configMessagePhase(interaction);
 
-        let admins = this.players.filter(p => p.user.permissions.has(PermissionFlagsBits.Administrator));
-        if (admins.length > 0) {
-            embeds.push(new EmbedBuilder()
-                .setTitle("Attention !")
-                .setColor(`#${process.env.WARN_COLOR}`)
-                .setDescription(`${admins.map(admin => `<@${admin.user.id}>`).join(", ")} est/sont administrateur(s) du serveur. Il(s) peut/peuvent donc voir tous les salons, y compris ceux privés. Attention à bien respecter les règles du jeu !`)
-            );
-        }
+        await this.createPlayers();
 
-        await this.generalChannel.send({ embeds });
+        await this.createChannels();
     }
 
     get generalPermissionOverwrites(): OverwriteResolvable[] {
@@ -282,7 +298,7 @@ export class Game {
         ]
     }
 
-    get werewolfPermissionOverwrites(): OverwriteResolvable[] {
+    get werewolvesPermissionOverwrites(): OverwriteResolvable[] {
         return [
             {
                 id: this.guild.roles.everyone.id,
@@ -307,6 +323,13 @@ export class Game {
                 id: id,
                 allow: [PermissionFlagsBits.ViewChannel]
             }
+        ]
+    }
+
+    get playerAndRolesFields() {
+        return [
+            { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") || "Aucun joueur pour l'instant" },
+            { name: "Rôles :", value: this.roles.map(role => `• ${role.name} ${role.emoji}`).join("\n") || "Aucun rôle pour l'instant" }
         ]
     }
 }
