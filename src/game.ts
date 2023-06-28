@@ -1,26 +1,38 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember } from "discord.js";
 import { shuffleArray } from "./utils.js";
 
-export enum Role {
-    Villager = "Villageois",
-    Werewolf = "Loup-garou"
+interface Role {
+    name: string,
+    emoji: string,
+    color: `#${string}`,
+    description: string,
+    image_url: string
 }
 
-function getEmojiFromRole(role: Role) {
-    switch (role) {
-        case Role.Villager:
-            return "👨‍🌾";
-        case Role.Werewolf:
-            return "🐺";
-    }
-}
+export const roles = {
+    villager: {
+        name: "Villageois",
+        emoji: "👨‍🌾",
+        color: "#00ff00",
+        description: "Vous n'avez aucun pouvoir particulier. Vous gagnez avec le village : votre but est d'éliminer tous les loups-garous.",
+        image_url: "https://www.regledujeu.fr/wp-content/uploads/simple-villageois-300x300.png"
+    } as Role,
+    werewolf: {
+        name: "Loup-Garou",
+        emoji: "🐺",
+        color: "#ff0000",
+        description: "Chaque nuit, vous vous réveillez avec les autres loups-garous pour dévorer un villageois. Vous gagnez avec les loups-garous : votre but est d'éliminer tous les villageois.",
+        image_url: "https://www.regledujeu.fr/wp-content/uploads/loup-garou-1-300x300.png"
+    } as Role,
+};
 
 export class Player {
-    id: string;
+    user: GuildMember;
     role: Role;
+    channel?: TextChannel;
 
-    constructor(id: string, role: Role = Role.Villager) {
-        this.id = id;
+    constructor(user: GuildMember, role: Role = roles.villager) {
+        this.user = user;
         this.role = role;
     }
 }
@@ -37,9 +49,10 @@ export class Game {
     players: Player[];
     client: Client;
     guild: Guild;
+
+    // Channels
     categoryChannel: CategoryChannel;
-
-
+    generalChannel: TextChannel;
 
     constructor(players_ids: string[] = [], client: Client, guild: Guild, creator_id: string) {
         this.players_ids = players_ids;
@@ -54,7 +67,7 @@ export class Game {
             .setColor(`#${process.env.MAIN_COLOR}`)
             .addFields([
                 { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") || "Aucun joueur pour l'instant" },
-                { name: "Rôles :", value: this.roles.map(role => `• ${role} ${getEmojiFromRole(role)}`).join("\n") || "Aucun rôle pour l'instant" }
+                { name: "Rôles :", value: this.roles.map(role => `• ${role.name} ${role.emoji}`).join("\n") || "Aucun rôle pour l'instant" }
             ]);
         
         const joinComponents = new ActionRowBuilder<ButtonBuilder>()
@@ -82,14 +95,14 @@ export class Game {
             .addComponents([
                 new ButtonBuilder()
                     .setCustomId("villager")
-                    .setEmoji("👨‍🌾")
-                    .setLabel("Villageois")
+                    .setEmoji(roles.villager.emoji)
+                    .setLabel(roles.villager.name)
                     .setStyle(ButtonStyle.Primary),
                 
                 new ButtonBuilder()
                     .setCustomId("werewolf")
-                    .setEmoji("🐺")
-                    .setLabel("Loup-garou")
+                    .setEmoji(roles.werewolf.emoji)
+                    .setLabel(roles.werewolf.name)
                     .setStyle(ButtonStyle.Danger)
             ]);
         
@@ -145,7 +158,7 @@ export class Game {
                             .setColor(`#${process.env.MAIN_COLOR}`)
                             .addFields([
                                 { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
-                                { name: "Rôles :", value: this.roles.map(role => `• ${role} ${getEmojiFromRole(role)}`).join("\n") }
+                                { name: "Rôles :", value: this.roles.map(role => `• ${role.name} ${role.emoji}`).join("\n") }
                             ]);
                         await buttonInteraction.update({ components: [], embeds: [embed] });
                         return;
@@ -155,7 +168,7 @@ export class Game {
                         await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
                         break;
                     } else {
-                        this.roles.push(Role.Villager);
+                        this.roles.push(roles.villager);
                         if (this.roles.length > this.players_ids.length) {
                             this.roles.shift();
                         }
@@ -167,7 +180,7 @@ export class Game {
                         await buttonInteraction.reply({ content: "Vous n'êtes pas l'hôte de la partie.", ephemeral: true });
                         break;
                     } else {
-                        this.roles.push(Role.Werewolf);
+                        this.roles.push(roles.werewolf);
                         await this.configMessageRefresh(buttonInteraction);
                         break;
                     }
@@ -178,15 +191,11 @@ export class Game {
     async init(interaction: ChatInputCommandInteraction) {
         await this.configMessage(interaction);
 
-        // Fetch players
-        for (const id of this.players_ids) {
-            await this.guild.members.fetch(id);
-        }
-
         // Create players
-        let roles = shuffleArray(this.roles);
+        this.roles = shuffleArray(this.roles);
+        this.players = [];
         for (let i=0; this.players_ids.length > i; i++) {
-            this.players.push(new Player(this.players_ids[i], roles[i]));
+            this.players.push(new Player(await this.guild.members.fetch(this.players_ids[i]), this.roles[i]));
         }
 
         // Create category
@@ -197,19 +206,65 @@ export class Game {
         })
 
         // Create channels
-        this.categoryChannel.children.create({
+
+        // General
+        this.generalChannel = await this.categoryChannel.children.create({
             name: "Place du village",
             type: ChannelType.GuildText,
             permissionOverwrites: this.generalPermissionOverwrites
         })
 
-        if (this.roles.includes(Role.Werewolf)) {
-            this.categoryChannel.children.create({
+        // Werewolf
+        if (this.roles.includes(roles.werewolf)) {
+            await this.categoryChannel.children.create({
                 name: "Tanière des loups",
                 type: ChannelType.GuildText,
-                permissionOverwrites: this.generalPermissionOverwrites
+                permissionOverwrites: this.werewolfPermissionOverwrites
             })
         }
+
+        // Create a channel for each player
+        for (let player of this.players) {
+            player.channel = await this.categoryChannel.children.create({
+                name: player.user.user.username,
+                type: ChannelType.GuildText,
+                permissionOverwrites: this.userPermissionOverwrites(player.user.id)
+            });
+
+            // Send role message
+            await player.channel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Vous êtes " + player.role.name)
+                        .setImage(player.role.image_url)
+                        .setDescription(player.role.description)
+                        .setColor(player.role.color)
+                ]
+            });
+        }
+
+        // Send start message
+        let embeds: EmbedBuilder[] = [];
+        embeds.push(new EmbedBuilder()
+            .setTitle("Place du village")
+            .setColor(`#${process.env.MAIN_COLOR}`)
+            .setDescription("Bienvenue sur la place du village !\n\nC'est ici que vous débatrez le jour pour éliminer un joueur suspect\n\nVous trouverez votre rôle dans le salon à votre nom.\nNe le partagez pas avec les autres joueurs ! 😉")
+            .addFields([
+                { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") },
+                { name: "Rôles :", value: shuffleArray(this.roles).map(role => `• ${role.name} ${role.emoji}`).join("\n") }
+            ])
+        );
+
+        let admins = this.players.filter(p => p.user.permissions.has(PermissionFlagsBits.Administrator));
+        if (admins.length > 0) {
+            embeds.push(new EmbedBuilder()
+                .setTitle("Attention !")
+                .setColor(`#${process.env.WARN_COLOR}`)
+                .setDescription(`${admins.map(admin => `<@${admin.user.id}>`).join(", ")} est/sont administrateur(s) du serveur. Il(s) peut/peuvent donc voir tous les salons, y compris ceux privés. Attention à bien respecter les règles du jeu !`)
+            );
+        }
+
+        await this.generalChannel.send({ embeds });
     }
 
     get generalPermissionOverwrites(): OverwriteResolvable[] {
@@ -233,12 +288,25 @@ export class Game {
                 id: this.guild.roles.everyone.id,
                 deny: [PermissionFlagsBits.ViewChannel]
             },
-            ...this.players.filter(player => player.role === Role.Werewolf).map(player => {
+            ...this.players.filter(player => player.role.name === roles.werewolf.name).map(player => {
                 return {
-                    id: player.id,
+                    id: player.user.id,
                     allow: [PermissionFlagsBits.ViewChannel]
                 }
             })
+        ]
+    }
+
+    userPermissionOverwrites(id: string): OverwriteResolvable[] {
+        return [
+            {
+                id: this.guild.roles.everyone.id,
+                deny: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+                id: id,
+                allow: [PermissionFlagsBits.ViewChannel]
+            }
         ]
     }
 }

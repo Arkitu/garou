@@ -5,20 +5,15 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-
     "watch_build": "swc src --out-dir build -w",
     "watch": "npm run watch_build & tsc -w --pretty --skipLibCheck --noEmit",
-
     "start": "node build/index.js",
     "start:dev": "npm run watch_build & npx nodemon",
     "start:prod": "npm run build && npm run start",
-
     "register_cmds": "node ./build/register_cmds.js",
-
     "partial_build": "npx swc src --out-dir build & tsc --pretty --skipLibCheck --noEmit",
     "build": "rimraf ./build && npm run partial_build",
     "complete_build": "npm i && npm run build && npm run register_cmds",
-
     "update": "git pull && npm run complete_build && npm run start"
   },
   "author": "",
@@ -42,5 +37,9 @@
   "engines": {
     "node": "^12.20.0 || ^14.13.1 || >=16.0.0"
   },
-  "type": "module"
+  "type": "module",
+  "optionalDependencies": {
+    "bufferutil": "^4.0.7",
+    "utf-8-validate": "^6.0.3"
+  }
 }
