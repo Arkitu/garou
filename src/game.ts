@@ -1,5 +1,7 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType, MessageCreateOptions, MappedChannelCategoryTypes } from "discord.js";
 import { shuffleArray } from "./utils.js";
+
+const WEREWOLF_PHASE_DURATION = 60; // seconds
 
 interface Role {
     name: string,
@@ -13,14 +15,14 @@ export const roles = {
     villager: {
         name: "Villageois",
         emoji: "👨‍🌾",
-        color: "#00ff00",
+        color: "#d8b362",
         description: "Vous n'avez aucun pouvoir particulier. Vous gagnez avec le village : votre but est d'éliminer tous les loups-garous.",
         image_url: "https://www.regledujeu.fr/wp-content/uploads/simple-villageois-300x300.png"
     } as Role,
     werewolf: {
         name: "Loup-Garou",
         emoji: "🐺",
-        color: "#ff0000",
+        color: "#6e1d1d",
         description: "Chaque nuit, vous vous réveillez avec les autres loups-garous pour dévorer un villageois. Vous gagnez avec les loups-garous : votre but est d'éliminer tous les villageois.",
         image_url: "https://www.regledujeu.fr/wp-content/uploads/loup-garou-1-300x300.png"
     } as Role,
@@ -29,12 +31,27 @@ export const roles = {
 export class Player {
     user: GuildMember;
     role: Role;
+    alive: boolean;
     channel?: TextChannel;
 
-    constructor(user: GuildMember, role: Role = roles.villager) {
+    constructor(user: GuildMember, role: Role = roles.villager, alive: boolean = true) {
         this.user = user;
         this.role = role;
+        this.alive = alive;
     }
+
+    kill() {
+        this.alive = false;
+    }
+}
+
+function votesToCount(votes: Map<string, string>) {
+    let count: {[key: string]: number} = {};
+    for (let vote of votes.values()) {
+        if (vote == "abstention") continue;
+        count[vote] = (count[vote] || 0) + 1;
+    }
+    return count;
 }
 
 export class Game {
@@ -46,9 +63,13 @@ export class Game {
 
     creator_id: string;
 
-    players: Player[];
+    playersRaw: Player[];
     client: Client;
     guild: Guild;
+
+    finished: boolean = false;
+
+    victims: Player[] = [];
 
     // Channels
     categoryChannel: CategoryChannel;
@@ -65,7 +86,6 @@ export class Game {
     async configMessageRefresh(interaction: ChatInputCommandInteraction | ButtonInteraction) {
         let embed = new EmbedBuilder()
             .setTitle("Configuration de la partie")
-            .setColor(`#${process.env.MAIN_COLOR}`)
             .addFields(this.playerAndRolesFields);
         
         const joinComponents = new ActionRowBuilder<ButtonBuilder>()
@@ -117,7 +137,7 @@ export class Game {
         const reply = await this.configMessageRefresh(interaction);
 
         while (true) {
-            const buttonInteraction = await reply.awaitMessageComponent<ComponentType.Button>({ time: 60000 });
+            const buttonInteraction = await reply.awaitMessageComponent<ComponentType.Button>({ time: 10 * 60000 });
 
             await db.updateOrCreateUser(interaction.user.id, interaction.user.username);
 
@@ -170,7 +190,6 @@ export class Game {
                     // Change the message
                     let embed = new EmbedBuilder()
                         .setTitle("Partie en cours")
-                        .setColor(`#${process.env.MAIN_COLOR}`)
                         .addFields(this.playerAndRolesFields);
                 
                     await buttonInteraction.update({ components: [], embeds: [embed] });
@@ -207,13 +226,13 @@ export class Game {
 
     async createPlayers() {
         this.roles = shuffleArray(this.roles);
-        this.players = [];
+        this.playersRaw = [];
         for (let i=0; this.players_ids.length > i; i++) {
-            this.players.push(new Player(await this.guild.members.fetch(this.players_ids[i]), this.roles[i]));
+            this.playersRaw.push(new Player(await this.guild.members.fetch(this.players_ids[i]), this.roles[i]));
         }
     }
 
-    async createChannel<T extends CategoryChannelType>(name: string, permissionOverwrites: OverwriteResolvable[], type: T) {
+    async createChannel<T extends CategoryChannelType>(name: string, permissionOverwrites: OverwriteResolvable[] = [], type: T = ChannelType.GuildText as T): Promise<MappedChannelCategoryTypes[T]> {
         return await this.categoryChannel.children.create({
             name: name,
             type: type,
@@ -226,19 +245,23 @@ export class Game {
         this.categoryChannel = await this.guild.channels.create({
             name: "Partie de Garou",
             type: ChannelType.GuildCategory,
-            permissionOverwrites: this.generalPermissionOverwrites
+            permissionOverwrites: [...this.generalViewPermissionOverwrites, ...this.unwritablesPermissionOverwrites]
         })
 
         // General
-        this.generalChannel = await this.createChannel("Place du village", this.generalPermissionOverwrites, ChannelType.GuildText);
+        this.generalChannel = await this.createChannel("Place du village") as TextChannel;
 
         // Send start message
         let embeds: EmbedBuilder[] = [];
         embeds.push(new EmbedBuilder()
             .setTitle("Place du village")
-            .setColor(`#${process.env.MAIN_COLOR}`)
-            .setDescription("Bienvenue sur la place du village !\n\nC'est ici que vous débatrez le jour pour éliminer un joueur suspect\n\nVous trouverez votre rôle dans le salon à votre nom.\nNe le partagez pas avec les autres joueurs ! 😉")
+            .setDescription("Bienvenue sur la place du village !\n\nC'est ici que vous débatrez le jour pour éliminer un joueur suspect")
             .addFields(this.playerAndRolesFields)
+        );
+
+        embeds.push(new EmbedBuilder()
+            .setTitle("Rappel des règles")
+            .setDescription("Ceci n'est pas un rappel des règles du loup garou en général, mais des règles de cette adaptation sur Discord\n\n• Pas de message privé entre les joueurs pendant la partie\n\n• Les admins ne doivent pas regarder les salons auquels ils n'auraient normalement pas accès. Il est conseillé de joueur avec un compte non-admin.\n\n• Vous trouverez votre rôle dans le salon à votre nom. Ne le partagez pas avec les autres joueurs !\n\n• Amusez-vous et apréciez cette expérience de jeu que mon développeur s'est galéré à amener sur Discord !")
         );
 
         // Warn players if there is/are admin(s) in the game
@@ -251,16 +274,33 @@ export class Game {
             );
         }
 
-        await this.generalChannel.send({ embeds });
+        let startMessage = await this.generalChannel.send({ embeds, components: [
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                    .setCustomId("start")
+                    .setLabel("Commencer la partie")
+                    .setStyle(ButtonStyle.Primary)
+            )
+        ] });
 
         // Werewolves
         if (this.roles.includes(roles.werewolf)) {
-            this.werewolvesChannel = await this.createChannel("Tanière des loups", this.werewolvesPermissionOverwrites, ChannelType.GuildText);
+            this.werewolvesChannel = await this.createChannel("Tanière des loups", this.werewolvesViewPermissionOverwrites) as TextChannel;
+        
+            // Send start message
+            await this.werewolvesChannel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Tanière des loups")
+                        .setColor(roles.werewolf.color)
+                        .setDescription("Bienvenue dans la tanière des loups !\n\nC'est ici que vous déciderez de la victime de la nuit")   
+                ]
+            });
         }
 
         // Create a channel for each player
         for (let player of this.players) {
-            player.channel = await this.createChannel(player.user.user.username, this.userPermissionOverwrites(player.user.id), ChannelType.GuildText);
+            player.channel = await this.createChannel(player.user.user.username, this.viewPermissionOverwrites(player.user.id)) as TextChannel;
 
             // Send role message
             await player.channel.send({
@@ -273,6 +313,8 @@ export class Game {
                 ]
             });
         }
+
+        await startMessage.awaitMessageComponent({ filter: i => i.customId == "start" && i.user.id == this.creator_id, time: 10 * 60000 });
     }
 
     async init(interaction: ChatInputCommandInteraction) {
@@ -283,37 +325,207 @@ export class Game {
         await this.createChannels();
     }
 
-    get generalPermissionOverwrites(): OverwriteResolvable[] {
+    /**
+     * @param startTimestamp In seconds
+     */
+    getWerewolvesPhaseMessage(votes: Map<string, string>, startTimestamp: number) {
+        const count = votesToCount(votes);
+
+        if (votes.size == this.werewolvesPlayers.length) {
+            return {
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Phase des loups-garous")
+                        .setColor(roles.werewolf.color)
+                        .setDescription(`La victime est <@${Object.entries(count).reduce((a, b) => a[1] > b[1] ? a : b)[0]}> !\n\nLe vote est terminé.`)
+                ],
+                components: []
+            }
+        }
+
+        return {
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase des loups-garous")
+                    .setColor(roles.werewolf.color)
+                    .setDescription("Choisissez votre victime\n\n" + Object.entries(count).map(([id, n]) => `• <@${id}> : ${n}`).join("\n") + `\n\nLe vote se termine <t:${startTimestamp + WEREWOLF_PHASE_DURATION}:R>\nSi il y a égalité à la fin du temps, la victime sera choisie aléatoirement parmi les joueurs à égalité.`)
+            ],
+            components: [
+                new ActionRowBuilder<ButtonBuilder>()
+                    .addComponents(
+                        [...this.players
+                            .filter(p => p.role != roles.werewolf)
+                            .map(p => 
+                                new ButtonBuilder()
+                                    .setCustomId(p.user.id)
+                                    .setLabel(p.user.user.username)
+                                    .setStyle(ButtonStyle.Primary)
+                            ),
+                            new ButtonBuilder()
+                                .setCustomId("cancel")
+                                .setLabel("Annuler")
+                                .setStyle(ButtonStyle.Danger)
+                        ]
+                    )
+            ]
+        }
+    }
+
+    async werewolvesPhase() {
+        await this.generalChannel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase des loups-garous")
+                    .setColor(roles.werewolf.color)
+                    .setDescription("Les loups-garous se réveillent et décident de la victime de la nuit")
+            ]
+        });
+
+        // werewolfId -> playerId
+        let votes = new Map<string, string>();
+        const startTimestamp = Math.floor(Date.now() / 1000);
+
+        // Send the message of the werewolves phase
+        const msg = await this.werewolvesChannel.send(this.getWerewolvesPhaseMessage(votes, startTimestamp));
+        
+        // Allow the werewolves send messages
+        await this.werewolvesChannel.permissionOverwrites.set([...this.werewolvesViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
+
+        // Wait for the werewolves to vote
+        while (true) {
+            let choice;
+
+            try {
+                choice = await msg.awaitMessageComponent({ time: WEREWOLF_PHASE_DURATION * 1000, componentType: ComponentType.Button });
+            } catch (e) {
+                if (e instanceof Error && e.message == "InteractionCollector has timed out.") {
+                    break;
+                } else {
+                    throw e;
+                }
+            }
+
+            if (choice.customId == "cancel") {
+                votes.delete(choice.user.id);
+            } else {
+                votes.set(choice.user.id, choice.customId);
+            }
+
+            await choice.update(this.getWerewolvesPhaseMessage(votes, startTimestamp));
+
+            if (votes.size == this.werewolvesPlayers.length) break;
+        }
+
+        const count = votesToCount(votes);
+
+        const victimId = Object.entries(count).reduce((a, b) => a[1] > b[1] ? a : b)[0];
+
+        const victim = this.players.find(p => p.user.id == victimId);
+
+        this.victims.push(victim);
+
+        // Disallow the werewolves send messages
+        await this.werewolvesChannel.permissionOverwrites.set(this.werewolvesViewPermissionOverwrites);
+    }
+
+    async dayPhase() {
+        await this.generalChannel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase du jour")
+                    .setColor(roles.villager.color)
+                    .setDescription("Le village se réveille et découvre la/les victime de la nuit")
+            ]
+        });
+
+        for (const victim of shuffleArray(this.victims)) {
+            this.players.find(p => p.user.id == victim.user.id).kill();
+
+            await this.generalChannel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle(`<@${victim.user.id}> est mort !`)
+                        .setColor(victim.role.color)
+                        .setDescription(`<@${victim.user.id}> était ${victim.role.name}`)
+                ]
+            });
+
+            this.categoryChannel.permissionOverwrites.edit(victim.user.id, { ViewChannel: true, SendMessages: false });
+        }
+
+        // Allow the players send messages
+        await this.generalChannel.permissionOverwrites.set([...this.generalViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
+
+        
+    }
+
+    async loop() {
+        await this.werewolvesPhase();
+
+        await this.dayPhase();
+    }
+
+    async start(interaction: ChatInputCommandInteraction) {
+        await this.init(interaction);
+
+        while (!this.finished) {
+            await this.loop();
+        }
+    }
+
+    get generalViewPermissionOverwrites(): OverwriteResolvable[] {
         return [
             {
                 id: this.guild.roles.everyone.id,
                 deny: [PermissionFlagsBits.ViewChannel]
             },
-            ...this.players_ids.map(id => {
+            ...this.players.map(p => {
                 return {
-                    id: id,
+                    id: p.user.id,
                     allow: [PermissionFlagsBits.ViewChannel]
                 }
             })
         ]
     }
 
-    get werewolvesPermissionOverwrites(): OverwriteResolvable[] {
+    get werewolvesViewPermissionOverwrites(): OverwriteResolvable[] {
         return [
             {
                 id: this.guild.roles.everyone.id,
                 deny: [PermissionFlagsBits.ViewChannel]
             },
-            ...this.players.filter(player => player.role.name === roles.werewolf.name).map(player => {
+            ...this.werewolvesPlayers.map(p => {
                 return {
-                    id: player.user.id,
+                    id: p.user.id,
                     allow: [PermissionFlagsBits.ViewChannel]
                 }
             })
         ]
     }
 
-    userPermissionOverwrites(id: string): OverwriteResolvable[] {
+    get writablesPermissionOverwrites(): OverwriteResolvable[] {
+        return [
+            ...this.players.map(p => {
+                return {
+                    id: p.user.id,
+                    allow: [PermissionFlagsBits.SendMessages]
+                }
+            })
+        ]
+    }
+
+    get unwritablesPermissionOverwrites(): OverwriteResolvable[] {
+        return [
+            ...this.players.map(p => {
+                return {
+                    id: p.user.id,
+                    deny: [PermissionFlagsBits.SendMessages]
+                }
+            })
+        ]
+    }
+
+    viewPermissionOverwrites(id: string): OverwriteResolvable[] {
         return [
             {
                 id: this.guild.roles.everyone.id,
@@ -331,5 +543,13 @@ export class Game {
             { name: "Joueurs :", value: this.players_ids.map(id => `• <@${id}>`).join("\n") || "Aucun joueur pour l'instant" },
             { name: "Rôles :", value: this.roles.map(role => `• ${role.name} ${role.emoji}`).join("\n") || "Aucun rôle pour l'instant" }
         ]
+    }
+
+    get werewolvesPlayers() {
+        return this.players.filter(player => player.role.name === roles.werewolf.name);
+    }
+
+    get players() {
+        return this.playersRaw.filter(player => player.alive);
     }
 }

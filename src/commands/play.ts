@@ -18,7 +18,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const players = [interaction.user.id];
 
     const game = new Game(players, interaction.client, interaction.guild, interaction.user.id);
-    await game.init(interaction);
+    await game.start(interaction);
 }
 
 export const admin = false;

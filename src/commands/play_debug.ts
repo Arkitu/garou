@@ -19,7 +19,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const game = new Game(players, interaction.client, interaction.guild!, interaction.user.id);
     game.roles = [roles.villager, roles.werewolf];
-    await game.init(interaction);
+    await game.start(interaction);
 }
 
 export const admin = true;
