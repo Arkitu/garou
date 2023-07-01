@@ -1,4 +1,4 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType, MessageCreateOptions, MappedChannelCategoryTypes } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType, MessageCreateOptions, MappedChannelCategoryTypes, MessagePayload, InteractionUpdateOptions } from "discord.js";
 import { shuffleArray } from "./utils.js";
 
 const WEREWOLF_PHASE_DURATION = 60; // seconds
@@ -314,7 +314,25 @@ export class Game {
             });
         }
 
-        await startMessage.awaitMessageComponent({ filter: i => i.customId == "start" && i.user.id == this.creator_id, time: 10 * 60000 });
+        try {
+            let inter = await startMessage.awaitMessageComponent({ filter: i => i.customId == "start" && i.user.id == this.creator_id, time: 10 * 60000 });
+            await inter.update({ components: [] });
+        } catch (e) {
+            if (e instanceof Error && e.message === "Collector received no interactions before ending with reason: time") {
+                await this.generalChannel.send({
+                    embeds: [
+                        new EmbedBuilder()
+                            .setTitle("Partie annulée")
+                            .setColor(`#${process.env.ERROR_COLOR}`)
+                            .setDescription("La partie a été annulée car le créateur n'a pas cliqué sur le bouton de démarrage à temps")
+                    ]
+                });
+
+                // TODO: Delete channels
+
+                return;
+            }
+        }
     }
 
     async init(interaction: ChatInputCommandInteraction) {
@@ -329,15 +347,13 @@ export class Game {
      * @param startTimestamp In seconds
      */
     getWerewolvesPhaseMessage(votes: Map<string, string>, startTimestamp: number) {
-        const count = votesToCount(votes);
-
         if (votes.size == this.werewolvesPlayers.length) {
             return {
                 embeds: [
                     new EmbedBuilder()
                         .setTitle("Phase des loups-garous")
                         .setColor(roles.werewolf.color)
-                        .setDescription(`La victime est <@${Object.entries(count).reduce((a, b) => a[1] > b[1] ? a : b)[0]}> !\n\nLe vote est terminé.`)
+                        .setDescription(`La victime est <@${this.getVictimFromVotes(votes).user.id}> !\n\nLe vote est terminé.`)
                 ],
                 components: []
             }
@@ -348,26 +364,9 @@ export class Game {
                 new EmbedBuilder()
                     .setTitle("Phase des loups-garous")
                     .setColor(roles.werewolf.color)
-                    .setDescription("Choisissez votre victime\n\n" + Object.entries(count).map(([id, n]) => `• <@${id}> : ${n}`).join("\n") + `\n\nLe vote se termine <t:${startTimestamp + WEREWOLF_PHASE_DURATION}:R>\nSi il y a égalité à la fin du temps, la victime sera choisie aléatoirement parmi les joueurs à égalité.`)
+                    .setDescription("Choisissez votre victime\n\n" + this.getVoteDescription(votes, startTimestamp, WEREWOLF_PHASE_DURATION))
             ],
-            components: [
-                new ActionRowBuilder<ButtonBuilder>()
-                    .addComponents(
-                        [...this.players
-                            .filter(p => p.role != roles.werewolf)
-                            .map(p => 
-                                new ButtonBuilder()
-                                    .setCustomId(p.user.id)
-                                    .setLabel(p.user.user.username)
-                                    .setStyle(ButtonStyle.Primary)
-                            ),
-                            new ButtonBuilder()
-                                .setCustomId("cancel")
-                                .setLabel("Annuler")
-                                .setStyle(ButtonStyle.Danger)
-                        ]
-                    )
-            ]
+            components: this.getVoteComponents(this.players.filter(p => !this.werewolvesPlayers.includes(p)))
         }
     }
 
@@ -381,48 +380,7 @@ export class Game {
             ]
         });
 
-        // werewolfId -> playerId
-        let votes = new Map<string, string>();
-        const startTimestamp = Math.floor(Date.now() / 1000);
-
-        // Send the message of the werewolves phase
-        const msg = await this.werewolvesChannel.send(this.getWerewolvesPhaseMessage(votes, startTimestamp));
-        
-        // Allow the werewolves send messages
-        await this.werewolvesChannel.permissionOverwrites.set([...this.werewolvesViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
-
-        // Wait for the werewolves to vote
-        while (true) {
-            let choice;
-
-            try {
-                choice = await msg.awaitMessageComponent({ time: WEREWOLF_PHASE_DURATION * 1000, componentType: ComponentType.Button });
-            } catch (e) {
-                if (e instanceof Error && e.message == "InteractionCollector has timed out.") {
-                    break;
-                } else {
-                    throw e;
-                }
-            }
-
-            if (choice.customId == "cancel") {
-                votes.delete(choice.user.id);
-            } else {
-                votes.set(choice.user.id, choice.customId);
-            }
-
-            await choice.update(this.getWerewolvesPhaseMessage(votes, startTimestamp));
-
-            if (votes.size == this.werewolvesPlayers.length) break;
-        }
-
-        const count = votesToCount(votes);
-
-        const victimId = Object.entries(count).reduce((a, b) => a[1] > b[1] ? a : b)[0];
-
-        const victim = this.players.find(p => p.user.id == victimId);
-
-        this.victims.push(victim);
+        this.victims.push(await this.votePhase(this.werewolvesPlayers, WEREWOLF_PHASE_DURATION, this.werewolvesChannel, this.getWerewolvesPhaseMessage.bind(this)));
 
         // Disallow the werewolves send messages
         await this.werewolvesChannel.permissionOverwrites.set(this.werewolvesViewPermissionOverwrites);
@@ -444,7 +402,7 @@ export class Game {
             await this.generalChannel.send({
                 embeds: [
                     new EmbedBuilder()
-                        .setTitle(`<@${victim.user.id}> est mort !`)
+                        .setTitle(`${victim.user.displayName} est mort !`)
                         .setColor(victim.role.color)
                         .setDescription(`<@${victim.user.id}> était ${victim.role.name}`)
                 ]
@@ -456,7 +414,7 @@ export class Game {
         // Allow the players send messages
         await this.generalChannel.permissionOverwrites.set([...this.generalViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
 
-        
+        // 
     }
 
     async loop() {
@@ -551,5 +509,83 @@ export class Game {
 
     get players() {
         return this.playersRaw.filter(player => player.alive);
+    }
+
+    getVoteComponents(players: Player[]) {
+        return [new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+                [...players
+                    .map(p => 
+                        new ButtonBuilder()
+                            .setCustomId(p.user.id)
+                            .setLabel(p.user.user.username)
+                            .setStyle(ButtonStyle.Primary)
+                    ),
+                    new ButtonBuilder()
+                        .setCustomId("cancel")
+                        .setLabel("Annuler")
+                        .setStyle(ButtonStyle.Danger)
+                ]
+            )]
+    }
+
+    getVoteDescription(votes: Map<string, string>, startTimestamp: number, phaseDuration: number) {
+        const distribution: { [key: string]: string[] } = {};
+
+        for (const [voterId, votedId] of votes.entries()) {
+            if (distribution[votedId]) {
+                distribution[votedId].push(voterId);
+            } else {
+                distribution[votedId] = [voterId];
+            }
+        }
+
+        return Object.entries(distribution)
+            .map(([voted, voters]) => `• <@${voted}> : <@` + voters.join(">, <@") + ">")
+            .join("\n") +
+            `\n\nLe vote se termine <t:${startTimestamp + phaseDuration}:R>` +
+            "\nSi il y a égalité à la fin du temps, la cible sera choisie aléatoirement parmi les joueurs à égalité."
+    }
+
+    getVictimFromVotes(votes: Map<string, string>) {
+        const count = votesToCount(votes);
+
+        const victimId = Object.entries(count).reduce((a, b) => a[1] > b[1] ? a : b)[0];
+
+        return this.players.find(p => p.user.id == victimId);
+    }
+
+    async votePhase(voters: Player[], phaseDuration: number, channel:TextChannel, getVoteMessage: (votes: Map<string, string>, startTimestamp: number) => { embeds: EmbedBuilder[], components: ActionRowBuilder<ButtonBuilder>[] }) {
+        const votes = new Map<string, string>();
+
+        const startTimestamp = Math.floor(Date.now() / 1000);
+
+        const msg = await channel.send(getVoteMessage(votes, startTimestamp));
+
+        while (true) {
+            let choice;
+
+            try {
+                choice = await msg.awaitMessageComponent({ time: phaseDuration * 1000, componentType: ComponentType.Button });
+            } catch (e) {
+                if (e instanceof Error && e.message === "Collector received no interactions before ending with reason: time") {
+                    break;
+                } else {
+                    throw e;
+                }
+            }
+
+            if (choice.customId == "cancel") {
+                votes.delete(choice.user.id);
+            } else {
+                votes.set(choice.user.id, choice.customId);
+            }
+
+            await choice.update(getVoteMessage(votes, startTimestamp));
+
+            if (votes.size == voters.length) break;
+        }
+
+        return this.getVictimFromVotes(votes);
     }
 }
