@@ -2,6 +2,7 @@ import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, Embed
 import { shuffleArray } from "./utils.js";
 
 const WEREWOLF_PHASE_DURATION = 60; // seconds
+const DAY_PHASE_DURATION = 60; // seconds
 
 interface Role {
     name: string,
@@ -370,6 +371,33 @@ export class Game {
         }
     }
 
+    /**
+     * @param startTimestamp In seconds
+     */
+    getDayPhaseMessage(votes: Map<string, string>, startTimestamp: number) {
+        if (votes.size == this.players.length - this.werewolvesPlayers.length) {
+            return {
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Phase du jour")
+                        .setColor(roles.villager.color)
+                        .setDescription(`La victime est <@${this.getVictimFromVotes(votes).user.id}> !\n\nLe vote est terminé.`)
+                ],
+                components: []
+            }
+        }
+
+        return {
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase du jour")
+                    .setColor(roles.villager.color)
+                    .setDescription("Choisissez votre victime\n\n" + this.getVoteDescription(votes, startTimestamp, DAY_PHASE_DURATION))
+            ],
+            components: this.getVoteComponents(this.players.filter(p => !this.werewolvesPlayers.includes(p)))
+        }
+    }
+
     async werewolvesPhase() {
         await this.generalChannel.send({
             embeds: [
@@ -410,17 +438,68 @@ export class Game {
 
             this.categoryChannel.permissionOverwrites.edit(victim.user.id, { ViewChannel: true, SendMessages: false });
         }
+        this.victims = [];
 
         // Allow the players send messages
         await this.generalChannel.permissionOverwrites.set([...this.generalViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
 
-        // 
+        // Vote for the victim
+        const victim = await this.votePhase(this.players, DAY_PHASE_DURATION, this.generalChannel, this.getDayPhaseMessage.bind(this));
+
+        this.players.find(p => p.user.id == victim.user.id).kill();
+    }
+
+    /**
+     * @returns true if the game is finished
+     */
+    async checkWin(): Promise<boolean> {
+        const werewolvesAlive = this.werewolvesPlayers.filter(p => p.alive).length;
+        const villagersAlive = this.players.filter(p => p.alive).length - werewolvesAlive;
+
+        if (werewolvesAlive == 0) {
+            await this.generalChannel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Victoire des villageois !")
+                        .setColor(roles.villager.color)
+                        .setDescription("Les loups-garous ont été tous tués !")
+                ]
+            });
+        } else if (villagersAlive == 0 && werewolvesAlive == 0) {
+            await this.generalChannel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Égalité !")
+                        .setColor(roles.villager.color)
+                        .setDescription("Il n'y a plus personne en vie !")
+                ]
+            });
+        } else if (villagersAlive == 0) {
+            await this.generalChannel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Victoire des loups-garous !")
+                        .setColor(roles.werewolf.color)
+                        .setDescription("Les loups-garous ont gagné !")
+                ]
+            });
+        } else {
+            this.finished = false;
+            return this.finished;
+        }
+
+        this.finished = true;
+        return this.finished;
     }
 
     async loop() {
         await this.werewolvesPhase();
 
+        if (await this.checkWin()) return;
+
         await this.dayPhase();
+
+        if (await this.checkWin()) return;
     }
 
     async start(interaction: ChatInputCommandInteraction) {
