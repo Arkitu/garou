@@ -1,6 +1,6 @@
 {
-  "watch": ["src"],
-  "ext": ".ts,.js",
+  "watch": ["build"],
+  "ext": ".js",
   "ignore": [],
   "exec": "npm run start"
 }

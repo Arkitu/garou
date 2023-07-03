@@ -270,7 +270,7 @@ export class Game {
         if (admins.length > 0) {
             embeds.push(new EmbedBuilder()
                 .setTitle("Attention !")
-                .setColor(`#${process.env.WARN_COLOR}`)
+                .setColor("Red")
                 .setDescription(`${admins.map(admin => `<@${admin.user.id}>`).join(", ")} est/sont administrateur(s) du serveur. Il(s) peut/peuvent donc voir tous les salons, y compris ceux privés. Attention à bien respecter les règles du jeu !`)
             );
         }
@@ -453,25 +453,28 @@ export class Game {
      * @returns true if the game is finished
      */
     async checkWin(): Promise<boolean> {
-        const werewolvesAlive = this.werewolvesPlayers.filter(p => p.alive).length;
-        const villagersAlive = this.players.filter(p => p.alive).length - werewolvesAlive;
+        const werewolvesAlive = this.werewolvesPlayers.filter(p => !this.victims.includes(p)).length;
+        const villagersAlive = this.players.filter(p => !this.victims.includes(p)).length - werewolvesAlive;
 
-        if (werewolvesAlive == 0) {
-            await this.generalChannel.send({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle("Victoire des villageois !")
-                        .setColor(roles.villager.color)
-                        .setDescription("Les loups-garous ont été tous tués !")
-                ]
-            });
-        } else if (villagersAlive == 0 && werewolvesAlive == 0) {
+        console.debug(`Werewolves alive: ${werewolvesAlive}`);
+        console.debug(`Villagers alive: ${villagersAlive}`);
+
+        if (villagersAlive == 0 && werewolvesAlive == 0) {
             await this.generalChannel.send({
                 embeds: [
                     new EmbedBuilder()
                         .setTitle("Égalité !")
                         .setColor(roles.villager.color)
                         .setDescription("Il n'y a plus personne en vie !")
+                ]
+            });
+        } else if (werewolvesAlive == 0) {
+            await this.generalChannel.send({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Victoire des villageois !")
+                        .setColor(roles.villager.color)
+                        .setDescription("Les loups-garous ont été tous tués !")
                 ]
             });
         } else if (villagersAlive == 0) {
@@ -667,6 +670,7 @@ export class Game {
             if (votes.size == voters.length) {
                 victim = this.getVictimFromVotes(votes, targets);
                 await choice.update(getVoteMessage(votes, startTimestamp, victim));
+                break;
             }
         }
 
