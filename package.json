@@ -6,9 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
 
-    "watch_parial_build": "swc src --out-dir build -w",
+    "watch_partial_build": "swc src --out-dir build -w",
     "watch_build": "npm run watch_build & tsc -w --pretty --skipLibCheck --noEmit",
-    "watch:dev": "npm run watch_build & npx nodemon",
+    "watch:dev": "npm run watch_partial_build & npx nodemon",
 
     "start": "node build/index.js",
     "start:dev": "npm run partial_build && npm run start",
