@@ -347,14 +347,14 @@ export class Game {
     /**
      * @param startTimestamp In seconds
      */
-    getWerewolvesPhaseMessage(votes: Map<string, string>, startTimestamp: number) {
-        if (votes.size == this.werewolvesPlayers.length) {
+    getWerewolvesPhaseMessage(votes: Map<string, string>, startTimestamp: number, victim: Player | null = null) {
+        if (victim) {
             return {
                 embeds: [
                     new EmbedBuilder()
                         .setTitle("Phase des loups-garous")
                         .setColor(roles.werewolf.color)
-                        .setDescription(`La victime est <@${this.getVictimFromVotes(votes).user.id}> !\n\nLe vote est terminé.`)
+                        .setDescription(`La victime est <@${victim.user.id}> !\n\nLe vote est terminé.`)
                 ],
                 components: []
             }
@@ -374,14 +374,14 @@ export class Game {
     /**
      * @param startTimestamp In seconds
      */
-    getDayPhaseMessage(votes: Map<string, string>, startTimestamp: number) {
-        if (votes.size == this.players.length - this.werewolvesPlayers.length) {
+    getDayPhaseMessage(votes: Map<string, string>, startTimestamp: number, victim: Player | null = null) {
+        if (victim) {
             return {
                 embeds: [
                     new EmbedBuilder()
                         .setTitle("Phase du jour")
                         .setColor(roles.villager.color)
-                        .setDescription(`La victime est <@${this.getVictimFromVotes(votes).user.id}> !\n\nLe vote est terminé.`)
+                        .setDescription(`La victime est <@${victim.user.id}> !\n\nLe vote est terminé.`)
                 ],
                 components: []
             }
@@ -408,7 +408,7 @@ export class Game {
             ]
         });
 
-        this.victims.push(await this.votePhase(this.werewolvesPlayers, WEREWOLF_PHASE_DURATION, this.werewolvesChannel, this.getWerewolvesPhaseMessage.bind(this)));
+        this.victims.push(await this.votePhase(this.werewolvesPlayers, this.players.filter(p => !this.werewolvesPlayers.includes(p)), WEREWOLF_PHASE_DURATION, this.werewolvesChannel, this.getWerewolvesPhaseMessage.bind(this)));
 
         // Disallow the werewolves send messages
         await this.werewolvesChannel.permissionOverwrites.set(this.werewolvesViewPermissionOverwrites);
@@ -444,7 +444,7 @@ export class Game {
         await this.generalChannel.permissionOverwrites.set([...this.generalViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
 
         // Vote for the victim
-        const victim = await this.votePhase(this.players, DAY_PHASE_DURATION, this.generalChannel, this.getDayPhaseMessage.bind(this));
+        const victim = await this.votePhase(this.players, this.players, DAY_PHASE_DURATION, this.generalChannel, this.getDayPhaseMessage.bind(this));
 
         this.players.find(p => p.user.id == victim.user.id).kill();
     }
@@ -626,7 +626,10 @@ export class Game {
             "\nSi il y a égalité à la fin du temps, la cible sera choisie aléatoirement parmi les joueurs à égalité."
     }
 
-    getVictimFromVotes(votes: Map<string, string>) {
+    getVictimFromVotes(votes: Map<string, string>, targets: Player[]) {
+        // If no one voted, a random player is chosen
+        if (votes.size == 0) return targets[Math.floor(Math.random() * targets.length)];
+
         const count = votesToCount(votes);
 
         const victimId = Object.entries(count).reduce((a, b) => a[1] > b[1] ? a : b)[0];
@@ -634,13 +637,14 @@ export class Game {
         return this.players.find(p => p.user.id == victimId);
     }
 
-    async votePhase(voters: Player[], phaseDuration: number, channel:TextChannel, getVoteMessage: (votes: Map<string, string>, startTimestamp: number) => { embeds: EmbedBuilder[], components: ActionRowBuilder<ButtonBuilder>[] }) {
+    async votePhase(voters: Player[], targets: Player[], phaseDuration: number, channel:TextChannel, getVoteMessage: (votes: Map<string, string>, startTimestamp: number, victim?: Player | null) => { embeds: EmbedBuilder[], components: ActionRowBuilder<ButtonBuilder>[] }) {
         const votes = new Map<string, string>();
 
         const startTimestamp = Math.floor(Date.now() / 1000);
 
         const msg = await channel.send(getVoteMessage(votes, startTimestamp));
 
+        let victim: Player;
         while (true) {
             let choice;
 
@@ -660,11 +664,12 @@ export class Game {
                 votes.set(choice.user.id, choice.customId);
             }
 
-            await choice.update(getVoteMessage(votes, startTimestamp));
-
-            if (votes.size == voters.length) break;
+            if (votes.size == voters.length) {
+                victim = this.getVictimFromVotes(votes, targets);
+                await choice.update(getVoteMessage(votes, startTimestamp, victim));
+            }
         }
 
-        return this.getVictimFromVotes(votes);
+        return this.getVictimFromVotes(votes, targets);
     }
 }
