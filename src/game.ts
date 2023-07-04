@@ -1,8 +1,15 @@
 import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType, MessageCreateOptions, MappedChannelCategoryTypes, MessagePayload, InteractionUpdateOptions } from "discord.js";
 import { shuffleArray } from "./utils.js";
 
-const WEREWOLF_PHASE_DURATION = 60; // seconds
-const DAY_PHASE_DURATION = 60; // seconds
+let WEREWOLF_PHASE_DURATION = 60; // seconds
+let DAY_PHASE_DURATION = 60; // seconds
+let END_PHASE_DURATION = 600; // seconds
+
+if (process.env.ENV == "dev") {
+    WEREWOLF_PHASE_DURATION = 10;
+    DAY_PHASE_DURATION = 10;
+    END_PHASE_DURATION = 10;
+}
 
 interface Role {
     name: string,
@@ -324,7 +331,7 @@ export class Game {
                     embeds: [
                         new EmbedBuilder()
                             .setTitle("Partie annulée")
-                            .setColor(`#${process.env.ERROR_COLOR}`)
+                            .setColor(`Red`)
                             .setDescription("La partie a été annulée car le créateur n'a pas cliqué sur le bouton de démarrage à temps")
                     ]
                 });
@@ -424,29 +431,18 @@ export class Game {
             ]
         });
 
-        for (const victim of shuffleArray(this.victims)) {
-            this.players.find(p => p.user.id == victim.user.id).kill();
-
-            await this.generalChannel.send({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle(`${victim.user.displayName} est mort !`)
-                        .setColor(victim.role.color)
-                        .setDescription(`<@${victim.user.id}> était ${victim.role.name}`)
-                ]
-            });
-
-            this.categoryChannel.permissionOverwrites.edit(victim.user.id, { ViewChannel: true, SendMessages: false });
-        }
-        this.victims = [];
+        await this.resolveVictims();
 
         // Allow the players send messages
-        await this.generalChannel.permissionOverwrites.set([...this.generalViewPermissionOverwrites, ...this.writablesPermissionOverwrites]);
+        await this.generalChannel.permissionOverwrites.set(this.writablesPermissionOverwrites);
 
         // Vote for the victim
         const victim = await this.votePhase(this.players, this.players, DAY_PHASE_DURATION, this.generalChannel, this.getDayPhaseMessage.bind(this));
 
-        this.players.find(p => p.user.id == victim.user.id).kill();
+        // Disallow the players send messages
+        await this.generalChannel.permissionOverwrites.set(this.unwritablesPermissionOverwrites);
+
+        await this.resolveVictim(victim);
     }
 
     /**
@@ -460,6 +456,7 @@ export class Game {
         console.debug(`Villagers alive: ${villagersAlive}`);
 
         if (villagersAlive == 0 && werewolvesAlive == 0) {
+            await this.resolveVictims();
             await this.generalChannel.send({
                 embeds: [
                     new EmbedBuilder()
@@ -469,6 +466,7 @@ export class Game {
                 ]
             });
         } else if (werewolvesAlive == 0) {
+            await this.resolveVictims();
             await this.generalChannel.send({
                 embeds: [
                     new EmbedBuilder()
@@ -478,6 +476,7 @@ export class Game {
                 ]
             });
         } else if (villagersAlive == 0) {
+            await this.resolveVictims();
             await this.generalChannel.send({
                 embeds: [
                     new EmbedBuilder()
@@ -503,6 +502,16 @@ export class Game {
         await this.dayPhase();
 
         if (await this.checkWin()) return;
+    }
+
+    async finish() {
+        await this.generalChannel.permissionOverwrites.set(this.writablesPermissionOverwrites);
+
+        await this.generalChannel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Fin de la partie")
+                    .setDescription(`La partie est terminée ! Les salons vont être supprimés <t:${Math.}`)
     }
 
     async start(interaction: ChatInputCommandInteraction) {
@@ -645,7 +654,7 @@ export class Game {
 
         const startTimestamp = Math.floor(Date.now() / 1000);
 
-        const msg = await channel.send(getVoteMessage(votes, startTimestamp));
+        let msg = await channel.send(getVoteMessage(votes, startTimestamp));
 
         let victim: Player;
         while (true) {
@@ -655,6 +664,8 @@ export class Game {
                 choice = await msg.awaitMessageComponent({ time: phaseDuration * 1000, componentType: ComponentType.Button });
             } catch (e) {
                 if (e instanceof Error && e.message === "Collector received no interactions before ending with reason: time") {
+                    victim = this.getVictimFromVotes(votes, targets);
+                    msg = await msg.edit(getVoteMessage(votes, startTimestamp, victim));
                     break;
                 } else {
                     throw e;
@@ -675,5 +686,28 @@ export class Game {
         }
 
         return this.getVictimFromVotes(votes, targets);
+    }
+
+    async resolveVictim(victim: Player) {
+        this.players.find(p => p.user.id == victim.user.id).kill();
+
+        await this.generalChannel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle(`${victim.user.displayName} est mort !`)
+                    .setColor(victim.role.color)
+                    .setDescription(`<@${victim.user.id}> était ${victim.role.name}`)
+                    .setThumbnail(victim.role.image_url)
+            ]
+        });
+
+        this.categoryChannel.permissionOverwrites.edit(victim.user.id, { ViewChannel: true, SendMessages: false });
+    }
+
+    async resolveVictims() {
+        for (const victim of shuffleArray(this.victims)) {
+            await this.resolveVictim(victim);
+        }
+        this.victims = [];
     }
 }

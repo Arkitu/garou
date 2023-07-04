@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { CategoryChannel, ChannelType, Client, Events, GatewayIntentBits } from 'discord.js';
 import consoleStamp from 'console-stamp';
 import getCmds from './get_cmds.js';
 import loadConfig from './load_config.js';
@@ -13,6 +13,9 @@ const commands = await getCmds();
 
 loadConfig();
 
+// Get ENV
+const ENV = process.env.ENV ?? "prod";
+
 loadDb();
 
 // Create client
@@ -21,14 +24,28 @@ const client = new Client({
 });
 
 // Log when ready
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
     console.log("Bot is ready!");
-    for (const id of process.env.ADMIN_IDS?.split(", ")) {
-        client.users.fetch(id).then(user => {
-            user.send("Bot started !")
-        })
+    if (ENV === "prod") {
+        for (const id of process.env.ADMIN_IDS?.split(", ")) {
+            client.users.fetch(id).then(user => {
+                user.send("Bot started !")
+            })
+        }
     }
-});
+    if (ENV === "dev") {
+        // Clean game channels
+        for (const category of (await client.guilds.fetch(process.env.DEV_GUILD_ID)).channels.cache?.filter(channel => channel.type === ChannelType.GuildCategory).values()) {
+            if (category.name === "Partie de Garou") {
+                for (const channel of (category as CategoryChannel).children.cache.values()) {
+                    await channel.delete();
+                }
+                await category.delete();
+            }
+        }
+        console.log("Cleaned game channels");
+    }
+})
 
 // Handle commands
 client.on(Events.InteractionCreate, async interaction => {
@@ -63,7 +80,9 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        throw error;
+        if (ENV === "dev") {
+            throw error;
+        }
 
         console.error(`${interaction.user.username} tried to use /${interaction.commandName} but an error occured: ${error}`);
         try {
@@ -102,6 +121,10 @@ client.on(Events.InteractionCreate, async interaction => {
     try {
         await command.autocomplete(interaction);
     } catch (error) {
+        if (ENV === "dev") {
+            throw error;
+        }
+
         console.error(`${interaction.user.username} tried to use /${interaction.commandName} autocomplete but an error occured: ${error}`);
     }
 })
