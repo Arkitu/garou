@@ -511,7 +511,28 @@ export class Game {
             embeds: [
                 new EmbedBuilder()
                     .setTitle("Fin de la partie")
-                    .setDescription(`La partie est terminée ! Les salons vont être supprimés <t:${Math.}`)
+                    .setDescription(`La partie est terminée ! Les salons vont être supprimés <t:${Math.floor((Date.now()/1000)+END_PHASE_DURATION)}:R>`)
+            ],
+            components: [
+                new ActionRowBuilder<ButtonBuilder>()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId("clear_channels")
+                            .setLabel("Supprimer les salons")
+                            .setStyle(ButtonStyle.Danger)
+                    )
+            ]
+        });
+
+        try {
+            await this.generalChannel.awaitMessageComponent({
+                filter: i => i.customId == "clear_channels" && i.user.id == this.creator_id,
+                time: END_PHASE_DURATION * 1000
+            });
+        } catch (e) {
+            if (e instanceof Error && e.message === "Collector received no interactions before ending with reason: time") return;
+            throw e;
+        }
     }
 
     async start(interaction: ChatInputCommandInteraction) {
