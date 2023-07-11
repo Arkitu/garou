@@ -1,4 +1,4 @@
-import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType, MessageCreateOptions, MappedChannelCategoryTypes, MessagePayload, InteractionUpdateOptions } from "discord.js";
+import { Client, Guild, ChannelType, PermissionFlagsBits, CategoryChannel, EmbedBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ButtonInteraction, OverwriteResolvable, TextChannel, User, GuildMember, CategoryChannelType, MessageCreateOptions, MappedChannelCategoryTypes, MessagePayload, InteractionUpdateOptions, Message, InteractionResponse } from "discord.js";
 import { shuffleArray } from "./utils.js";
 
 let WEREWOLF_PHASE_DURATION = 60; // seconds
@@ -9,6 +9,7 @@ let END_PHASE_DURATION = 600; // seconds
 if (process.env.ENV == "dev") {
     WEREWOLF_PHASE_DURATION = 10;
     DAY_PHASE_DURATION = 10;
+    SEER_PHASE_DURATION = 10;
     END_PHASE_DURATION = 10;
 }
 
@@ -87,6 +88,8 @@ export class Game {
 
     victims: Player[] = [];
 
+    configMessage?: Message | InteractionResponse;
+
     // Channels
     categoryChannel: CategoryChannel;
     generalChannel: TextChannel;
@@ -150,10 +153,10 @@ export class Game {
     }
 
     async configMessagePhase(interaction: ChatInputCommandInteraction) {
-        const reply = await this.configMessageRefresh(interaction);
+        this.configMessage = await this.configMessageRefresh(interaction);
 
         while (true) {
-            const buttonInteraction = await reply.awaitMessageComponent<ComponentType.Button>({ time: 10 * 60000 });
+            const buttonInteraction = await this.configMessage.awaitMessageComponent<ComponentType.Button>({ time: 10 * 60000 });
 
             await db.updateOrCreateUser(interaction.user.id, interaction.user.username);
 
@@ -209,6 +212,16 @@ export class Game {
                         .addFields(this.playerAndRolesFields);
                 
                     await buttonInteraction.update({ components: [], embeds: [embed] });
+
+                    // Edit the config message
+                    this.configMessage.edit({
+                        embeds: [
+                            new EmbedBuilder()
+                                .setTitle("Partie en cours")
+                                .addFields(this.playerAndRolesFields)
+                        ],
+                        components: []
+                    })
 
                     // Exit the function
                     return;
@@ -586,19 +599,18 @@ export class Game {
 
         try {
             await this.generalChannel.awaitMessageComponent({
-                filter: i => i.customId == "clear_channels" && i.user.id == this.creator_id,
+                filter: i => i.customId === "clear_channels" && i.user.id === this.creator_id,
                 time: END_PHASE_DURATION * 1000
             });
         } catch (e) {
-            if (e instanceof Error && e.message === "Collector received no interactions before ending with reason: time") return;
-            throw e;
+            if (e instanceof Error && e.message != "Collector received no interactions before ending with reason: time") throw e;
         }
 
         for (const channel of this.categoryChannel.children.cache.values()) {
-            await channel.delete();
+            await channel.delete("Game finished");
         }
 
-        await this.categoryChannel.delete();
+        await this.categoryChannel.delete("Game finished");
     }
 
     async start(interaction: ChatInputCommandInteraction) {
