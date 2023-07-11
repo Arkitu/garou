@@ -3,6 +3,7 @@ import { shuffleArray } from "./utils.js";
 
 let WEREWOLF_PHASE_DURATION = 60; // seconds
 let DAY_PHASE_DURATION = 60; // seconds
+let SEER_PHASE_DURATION = 60; // seconds
 let END_PHASE_DURATION = 600; // seconds
 
 if (process.env.ENV == "dev") {
@@ -25,15 +26,22 @@ export const roles = {
         emoji: "👨‍🌾",
         color: "#d8b362",
         description: "Vous n'avez aucun pouvoir particulier. Vous gagnez avec le village : votre but est d'éliminer tous les loups-garous.",
-        image_url: "https://www.regledujeu.fr/wp-content/uploads/simple-villageois-300x300.png"
+        image_url: "https://www.regledujeu.fr/wp-content/uploads/simple-villageois.png"
     } as Role,
     werewolf: {
         name: "Loup-Garou",
         emoji: "🐺",
         color: "#6e1d1d",
         description: "Chaque nuit, vous vous réveillez avec les autres loups-garous pour dévorer un villageois. Vous gagnez avec les loups-garous : votre but est d'éliminer tous les villageois.",
-        image_url: "https://www.regledujeu.fr/wp-content/uploads/loup-garou-1-300x300.png"
+        image_url: "https://www.regledujeu.fr/wp-content/uploads/loup-garou-1.png"
     } as Role,
+    seer: {
+        name: "Voyante",
+        emoji: "👁️",
+        color: "#702d5f",
+        description: "Chaque nuit, vous vous réveillez pour espionner un joueur et découvrir sa véritable identité. Vous gagnez avec le village : votre but est d'éliminer tous les loups-garous.",
+        image_url: "https://www.regledujeu.fr/wp-content/uploads/voyante-1.png"
+    } as Role
 };
 
 export class Player {
@@ -405,7 +413,36 @@ export class Game {
         }
     }
 
+    /**
+     * @param startTimestamp In seconds
+     */
+    getSeerPhaseMessage(votes: Map<string, string>, startTimestamp: number, victim: Player | null = null) {
+        if (victim) {
+            return {
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("Phase de la voyante")
+                        .setColor(roles.seer.color)
+                        .setDescription(`${victim.user.user.username} est ${victim.role.name} !`)
+                ],
+                components: []
+            }
+        }
+
+        return {
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase de la voyante")
+                    .setColor(roles.seer.color)
+                    .setDescription("Choisissez la personne dont vous voulez connaître le rôle\n" + this.getVoteDescription(votes, startTimestamp, SEER_PHASE_DURATION))
+            ],
+            components: this.getVoteComponents(this.players.filter(p => p.role.name != roles.seer.name))
+        }
+    }
+
     async werewolvesPhase() {
+        if (this.werewolvesPlayers.length == 0) return;
+
         await this.generalChannel.send({
             embeds: [
                 new EmbedBuilder()
@@ -445,15 +482,36 @@ export class Game {
         await this.resolveVictim(victim);
     }
 
+    async seerPhase() {
+        if (!this.seerPlayer) return;
+
+        await this.generalChannel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase de la voyante")
+                    .setColor(roles.seer.color)
+                    .setDescription("La voyante se réveille et découvre le rôle d'un joueur")
+            ]
+        });
+
+        const player = await this.seerPlayer.channel.send({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("Phase de la voyante")
+                    .setColor(roles.seer.color)
+                    .setDescription("Choisissez un joueur")
+            ]
+        });
+
+        const target = await this.votePhase([this.seerPlayer], this.players.filter(p => p.role.name != roles.seer.name), SEER_PHASE_DURATION, this.seerPlayer.channel, this.getSeerPhaseMessage.bind(this));
+    }
+
     /**
      * @returns true if the game is finished
      */
     async checkWin(): Promise<boolean> {
         const werewolvesAlive = this.werewolvesPlayers.filter(p => !this.victims.includes(p)).length;
         const villagersAlive = this.players.filter(p => !this.victims.includes(p)).length - werewolvesAlive;
-
-        console.debug(`Werewolves alive: ${werewolvesAlive}`);
-        console.debug(`Villagers alive: ${villagersAlive}`);
 
         if (villagersAlive == 0 && werewolvesAlive == 0) {
             await this.resolveVictims();
@@ -495,6 +553,8 @@ export class Game {
     }
 
     async loop() {
+        await this.seerPhase();
+
         await this.werewolvesPhase();
 
         if (await this.checkWin()) return;
@@ -533,6 +593,12 @@ export class Game {
             if (e instanceof Error && e.message === "Collector received no interactions before ending with reason: time") return;
             throw e;
         }
+
+        for (const channel of this.categoryChannel.children.cache.values()) {
+            await channel.delete();
+        }
+
+        await this.categoryChannel.delete();
     }
 
     async start(interaction: ChatInputCommandInteraction) {
@@ -541,6 +607,8 @@ export class Game {
         while (!this.finished) {
             await this.loop();
         }
+
+        await this.finish();
     }
 
     get generalViewPermissionOverwrites(): OverwriteResolvable[] {
@@ -617,6 +685,10 @@ export class Game {
 
     get werewolvesPlayers() {
         return this.players.filter(player => player.role.name === roles.werewolf.name);
+    }
+
+    get seerPlayer() {
+        return this.players.find(player => player.role.name === roles.seer.name);
     }
 
     get players() {
